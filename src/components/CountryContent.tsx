@@ -47,7 +47,6 @@ export default function CountryContent({ countryName }: CountryContentProps) {
 
     const fetchContributions = async () => {
         setIsLoading(true);
-        console.log(`[Diagnostic] Fetching for: "${countryName}" (ID: "${countryId}")`);
         try {
             const sessionId = getSessionId();
 
@@ -60,19 +59,20 @@ export default function CountryContent({ countryName }: CountryContentProps) {
                 .order('created_at', { ascending: false });
 
             if (error) {
-                console.error("[Diagnostic] Supabase Error:", error);
+                console.error("[Contributions] Fetch Error:", error.message);
                 throw error;
             }
 
-            console.log(`[Diagnostic] Found ${contribs?.length || 0} items`);
-
-            // Fetch user's likes from DB
+            // Fetch user's likes from DB - Handle gracefully if fetch fails
             const { data: userLikes, error: likesError } = await supabase
                 .from('likes')
                 .select('contribution_id')
                 .eq('user_id', sessionId);
 
-            if (likesError) throw likesError;
+            if (likesError) {
+                console.warn("[Social] User likes fetch failed:", likesError.message);
+                // Continue with contributions even if likes fetch fails
+            }
 
             const likedMap: Record<string, boolean> = {};
             userLikes?.forEach(like => {
