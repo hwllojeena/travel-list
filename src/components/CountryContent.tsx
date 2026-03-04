@@ -47,6 +47,7 @@ export default function CountryContent({ countryName }: CountryContentProps) {
 
     const fetchContributions = async () => {
         setIsLoading(true);
+        console.log(`[Diagnostic] Fetching for: "${countryName}" (ID: "${countryId}")`);
         try {
             const sessionId = getSessionId();
 
@@ -54,11 +55,16 @@ export default function CountryContent({ countryName }: CountryContentProps) {
             const { data: contribs, error: error } = await supabase
                 .from('contributions')
                 .select('*, comments(id)')
-                .eq('country_id', countryId)
+                .or(`country_id.eq.${countryId},country_name.ilike.${countryName}`)
                 .order('likes_count', { ascending: false })
                 .order('created_at', { ascending: false });
 
-            if (error) throw error;
+            if (error) {
+                console.error("[Diagnostic] Supabase Error:", error);
+                throw error;
+            }
+
+            console.log(`[Diagnostic] Found ${contribs?.length || 0} items`);
 
             // Fetch user's likes from DB
             const { data: userLikes, error: likesError } = await supabase
