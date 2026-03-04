@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { X, Camera, Utensils, MapPin, Compass, ChevronRight, ChevronLeft, Globe, DollarSign, Clock, Zap, Flame, RefreshCw } from "lucide-react";
+import { X, Camera, Utensils, MapPin, Compass, ChevronRight, ChevronLeft, Globe, DollarSign, Clock, Zap, Flame, RefreshCw, Loader2 } from "lucide-react";
 import { getCurrencySymbol } from "@/utils/currency";
+import { supabase } from "@/lib/supabase";
+import { useToast } from "./Toast";
+import Toast from "./Toast";
 
 interface ContributionModalProps {
     isOpen: boolean;
@@ -14,6 +17,7 @@ type Category = "eat" | "do" | "visit";
 
 
 export default function ContributionModal({ isOpen, onClose, countryName }: ContributionModalProps) {
+    const { toast, showToast, hideToast } = useToast();
     const [step, setStep] = useState(1);
     const [category, setCategory] = useState<Category | null>(null);
     const [image, setImage] = useState<File | null>(null);
@@ -30,6 +34,7 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
         spiceLevel: "",
         activities: "",
     });
+    const [isPublishing, setIsPublishing] = useState(false);
 
     const categories = [
         { id: "do", label: "An activity people must do", icon: Compass, color: "text-blue-500", bg: "bg-blue-50" },
@@ -64,14 +69,82 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
     };
 
     const handleNext = () => {
-        if (category) setStep(2);
+        if (category && image) setStep(2);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        console.log({ category, ...formData, image });
-        alert(`Thanks for contributing to ${countryName}! (Simulated)`);
-        onClose();
+        if (!category || !image) return;
+
+        setIsPublishing(true);
+        try {
+            // 1. Upload media to Supabase Storage
+            const fileExt = image.name.split('.').pop();
+            const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
+            const countrySlug = countryName.toLowerCase().replace(/\s+/g, '-');
+            const filePath = `${countrySlug}/${fileName}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('travel-photos')
+                .upload(filePath, image);
+
+            if (uploadError) throw uploadError;
+
+            // 2. Get Public URL
+            const { data: { publicUrl } } = supabase.storage
+                .from('travel-photos')
+                .getPublicUrl(filePath);
+
+            // 3. Save contribution to Database
+            const { error: insertError } = await supabase
+                .from('contributions')
+                .insert([{
+                    country_id: countryName.toLowerCase().replace(/\s+/g, '-'),
+                    country_name: countryName,
+                    category,
+                    title: formData.title,
+                    description: formData.description,
+                    image_url: publicUrl,
+                    author_name: "Anonymous",
+                    metadata: {
+                        location: formData.location,
+                        budget: formData.budget,
+                        difficulty: formData.difficulty,
+                        spice_level: formData.spiceLevel,
+                        activities: formData.activities
+                    }
+                }]);
+
+            if (insertError) throw insertError;
+
+            showToast(`Successfully shared your experience in ${countryName}!`, "success");
+
+            // Wait a bit before closing so user sees the success toast
+            setTimeout(() => {
+                onClose();
+                // Reset state
+                setStep(1);
+                setCategory(null);
+                setImage(null);
+                setPreview(null);
+                setFormData({
+                    title: "",
+                    description: "",
+                    location: "",
+                    budget: "",
+                    difficulty: "",
+                    spiceLevel: "",
+                    activities: ""
+                });
+            }, 1500);
+
+        } catch (error: any) {
+            console.error("Error publishing:", error);
+            const errorMessage = error.message || "Unknown error";
+            showToast(`Failed to publish: ${errorMessage}`, "error");
+        } finally {
+            setIsPublishing(false);
+        }
     };
 
     if (!isOpen) return null;
@@ -89,96 +162,103 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
             >
                 {step === 1 ? (
                     /* Step 1: Initial Selection (Centered) */
-                    <div className="w-full bg-white sm:rounded-[40px] overflow-hidden sm:shadow-[0_20px_50px_rgba(0,0,0,0.1)] sm:border sm:border-gray-100 animate-in fade-in zoom-in-95 duration-500">
-                        <div className="flex items-center justify-between border-b border-notion-border p-6 px-10 bg-white sticky top-0 z-10">
-                            <div className="flex items-center gap-3">
-                                <div className="h-3 w-3 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
-                                <h2 className="text-xs font-bold tracking-[0.2em] text-notion-text-light uppercase">
-                                    Contributing to {countryName}
-                                </h2>
+                    <div className="relative w-full max-w-2xl mx-auto">
+                        <div className="bg-white sm:rounded-[40px] overflow-hidden sm:shadow-[0_20px_50px_rgba(0,0,0,0.1)] sm:border sm:border-gray-100 animate-in fade-in zoom-in-95 duration-500">
+                            <div className="flex items-center justify-between border-b border-notion-border p-6 px-10 bg-white sticky top-0 z-10">
+                                <div className="flex items-center gap-3">
+                                    <div className="h-3 w-3 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
+                                    <h2 className="text-xs font-bold tracking-[0.2em] text-notion-text-light uppercase">
+                                        Contributing to {countryName}
+                                    </h2>
+                                </div>
                             </div>
-                            <button onClick={onClose} className="rounded-full p-2 hover:bg-notion-bg-secondary transition-all">
-                                <X className="h-5 w-5 text-notion-text-light" />
-                            </button>
+
+                            <div className="p-10 md:p-12 space-y-10">
+                                <div className="space-y-4">
+                                    <label className="text-3xl font-bold tracking-tight text-notion-text block">
+                                        First, add a photo or video
+                                    </label>
+                                    <div
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className={`group relative w-full overflow-hidden rounded-[32px] border-2 border-dashed transition-all flex flex-col items-center justify-center cursor-pointer ${preview ? 'border-notion-text/10 bg-gray-50 shadow-inner p-2' : 'h-64 border-notion-border bg-notion-bg-secondary hover:border-notion-text/30 hover:bg-white'
+                                            }`}
+                                    >
+                                        {preview ? (
+                                            <>
+                                                {image?.type.startsWith("video/") ? (
+                                                    <video
+                                                        src={preview}
+                                                        className="w-full h-auto max-h-[65vh] object-contain rounded-[24px] pointer-events-none"
+                                                        autoPlay
+                                                        muted
+                                                        loop
+                                                        playsInline
+                                                    />
+                                                ) : (
+                                                    <img src={preview} alt="Preview" className="w-full h-auto max-h-[65vh] object-contain rounded-[24px]" />
+                                                )}
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm m-2 rounded-[24px]">
+                                                    <div className="bg-white p-3 rounded-full shadow-lg">
+                                                        <RefreshCw className="h-6 w-6 text-notion-text animate-spin-slow" />
+                                                    </div>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Camera className="h-10 w-10 text-notion-text-light group-hover:scale-110 transition-transform duration-300" />
+                                                <div className="text-center mt-4">
+                                                    <p className="text-sm font-bold text-notion-text">Click to upload media</p>
+                                                    <p className="text-[10px] text-notion-text-light mt-1 uppercase tracking-[0.2em] font-medium">High resolution content</p>
+                                                </div>
+                                            </>
+                                        )}
+                                        <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleImageChange} className="hidden" />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <label className="text-2xl font-bold tracking-tight text-notion-text block">
+                                        What are you adding?
+                                    </label>
+                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                        {categories.map((cat) => (
+                                            <button
+                                                key={cat.id}
+                                                type="button"
+                                                onClick={() => setCategory(cat.id)}
+                                                className={`flex flex-col items-center gap-3 rounded-[24px] border p-6 text-center transition-all duration-300 ${category === cat.id
+                                                    ? "border-notion-text bg-notion-text/5 ring-4 ring-notion-text/5 shadow-inner"
+                                                    : "border-notion-border hover:bg-notion-bg-secondary hover:border-notion-text/20"
+                                                    }`}
+                                            >
+                                                <div className={`rounded-2xl p-3 flex-shrink-0 transition-all ${category === cat.id ? 'bg-white shadow-md scale-110' : cat.bg}`}>
+                                                    <cat.icon className={`h-6 w-6 ${cat.color}`} />
+                                                </div>
+                                                <span className="text-[10px] font-bold text-notion-text uppercase tracking-widest leading-tight">{cat.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={handleNext}
+                                    disabled={!category || !image}
+                                    className="w-full h-13 flex items-center justify-center gap-3 rounded-[20px] bg-notion-text text-sm font-bold text-white transition-all hover:bg-black hover:shadow-lg disabled:opacity-20 disabled:cursor-not-allowed uppercase tracking-[0.3em] font-mono shadow-[0_5px_15px_rgba(0,0,0,0.1)]"
+                                >
+                                    Continue
+                                    <ChevronRight className="h-5 w-5" />
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="p-10 md:p-12 space-y-10">
-                            <div className="space-y-4">
-                                <label className="text-3xl font-bold tracking-tight text-notion-text block">
-                                    First, add a photo or video
-                                </label>
-                                <div
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className={`group relative w-full overflow-hidden rounded-[32px] border-2 border-dashed transition-all flex flex-col items-center justify-center cursor-pointer ${preview ? 'border-notion-text/10 bg-gray-50 shadow-inner p-2' : 'h-64 border-notion-border bg-notion-bg-secondary hover:border-notion-text/30 hover:bg-white'
-                                        }`}
-                                >
-                                    {preview ? (
-                                        <>
-                                            {image?.type.startsWith("video/") ? (
-                                                <video
-                                                    src={preview}
-                                                    className="w-full h-auto max-h-[65vh] object-contain rounded-[24px] pointer-events-none"
-                                                    autoPlay
-                                                    muted
-                                                    loop
-                                                    playsInline
-                                                />
-                                            ) : (
-                                                <img src={preview} alt="Preview" className="w-full h-auto max-h-[65vh] object-contain rounded-[24px]" />
-                                            )}
-                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm m-2 rounded-[24px]">
-                                                <div className="bg-white p-3 rounded-full shadow-lg">
-                                                    <RefreshCw className="h-6 w-6 text-notion-text animate-spin-slow" />
-                                                </div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="rounded-full bg-white p-5 shadow-sm border border-notion-border group-hover:scale-110 transition-transform duration-300">
-                                                <Camera className="h-8 w-8 text-notion-text-light" />
-                                            </div>
-                                            <div className="text-center">
-                                                <p className="text-sm font-bold text-notion-text">Click to upload media</p>
-                                                <p className="text-[10px] text-notion-text-light mt-1 uppercase tracking-[0.2em] font-medium">High resolution content</p>
-                                            </div>
-                                        </>
-                                    )}
-                                    <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleImageChange} className="hidden" />
-                                </div>
-                            </div>
-
-                            <div className="space-y-4">
-                                <label className="text-2xl font-bold tracking-tight text-notion-text block">
-                                    What are you adding?
-                                </label>
-                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                                    {categories.map((cat) => (
-                                        <button
-                                            key={cat.id}
-                                            type="button"
-                                            onClick={() => setCategory(cat.id)}
-                                            className={`flex flex-col items-center gap-3 rounded-[24px] border p-6 text-center transition-all duration-300 ${category === cat.id
-                                                ? "border-notion-text bg-notion-text/5 ring-4 ring-notion-text/5 shadow-inner"
-                                                : "border-notion-border hover:bg-notion-bg-secondary hover:border-notion-text/20"
-                                                }`}
-                                        >
-                                            <div className={`rounded-2xl p-3 flex-shrink-0 transition-all ${category === cat.id ? 'bg-white shadow-md scale-110' : cat.bg}`}>
-                                                <cat.icon className={`h-6 w-6 ${cat.color}`} />
-                                            </div>
-                                            <span className="text-[10px] font-bold text-notion-text uppercase tracking-widest leading-tight">{cat.label}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
+                        {/* Standalone Close Button (Step 1) */}
+                        <div className="absolute -top-16 right-0 animate-in fade-in duration-1000">
                             <button
-                                type="button"
-                                onClick={handleNext}
-                                disabled={!category}
-                                className="w-full h-13 flex items-center justify-center gap-3 rounded-[20px] bg-notion-text text-sm font-bold text-white transition-all hover:bg-black hover:shadow-lg disabled:opacity-20 disabled:cursor-not-allowed uppercase tracking-[0.3em] font-mono shadow-[0_5px_15px_rgba(0,0,0,0.1)]"
+                                onClick={onClose}
+                                className="bg-white p-4 rounded-full shadow-2xl hover:bg-gray-50 transition-all active:scale-90 group"
                             >
-                                Continue
-                                <ChevronRight className="h-5 w-5" />
+                                <X className="h-6 w-6 text-notion-text group-hover:rotate-90 transition-transform duration-500" />
                             </button>
                         </div>
                     </div>
@@ -192,7 +272,7 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
                                     <button
                                         type="button"
                                         onClick={() => setStep(1)}
-                                        className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-full transition-colors group"
+                                        className="flex items-center gap-2 p-2 hover:bg-notion-bg-secondary rounded-full transition-colors group"
                                     >
                                         <ChevronLeft className="h-6 w-6 text-notion-text group-hover:-translate-x-1 transition-transform" />
                                         <span className="text-xs font-bold uppercase tracking-widest text-notion-text">Edit Asset</span>
@@ -298,9 +378,17 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
                                     <div className="space-y-4">
                                         <button
                                             type="submit"
-                                            className="w-full h-13 rounded-[24px] bg-notion-text text-sm font-bold text-white transition-all hover:bg-black hover:scale-[1.01] active:scale-95 uppercase tracking-[0.2em] font-mono shadow-xl shadow-notion-text/10"
+                                            disabled={isPublishing || !formData.title.trim() || !formData.description.trim()}
+                                            className="w-full h-13 rounded-[24px] bg-notion-text text-sm font-bold text-white transition-all hover:bg-black hover:scale-[1.01] active:scale-95 uppercase tracking-[0.2em] font-mono shadow-xl shadow-notion-text/10 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
-                                            Publish
+                                            {isPublishing ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                    Publishing...
+                                                </>
+                                            ) : (
+                                                "Publish"
+                                            )}
                                         </button>
                                         <p className="text-center text-[9px] uppercase tracking-[0.3em] text-notion-text-light font-bold opacity-40">
                                             Curating {countryName} together
@@ -322,6 +410,13 @@ export default function ContributionModal({ isOpen, onClose, countryName }: Cont
                     </>
                 )}
             </div>
+
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                isVisible={toast.isVisible}
+                onClose={hideToast}
+            />
         </div>
     );
 }
